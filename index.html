@@ -1,170 +1,405 @@
 from flask import Flask, render_template_string, request, redirect, url_for, session
-import random
-import math
+import math, random
 
 app = Flask(__name__)
-app.secret_key = 'chave_secreta'
+app.secret_key = 'simulador-filmes'
 
-# Gêneros de filmes (sem incluir musicais)
-generos = ['Ação', 'Comédia', 'Drama', 'Romance', 'Terror', 'Ficção Científica', 'Aventura']
+# ====== Dados fake ======
 
-# Filmes fictícios para demonstração
-filmes = [
-    {'titulo': 'Vingadores', 'genero': 'Ação', 'poster': 'https://via.placeholder.com/150', 'avaliacao': 4, 'descricao': 'A batalha para salvar o mundo.'},
-    {'titulo': 'O Poderoso Chefão', 'genero': 'Drama', 'poster': 'https://via.placeholder.com/150', 'avaliacao': 5, 'descricao': 'A história de uma família mafiosa.'},
-    {'titulo': 'De Volta para o Futuro', 'genero': 'Ficção Científica', 'poster': 'https://via.placeholder.com/150', 'avaliacao': 5, 'descricao': 'Viagens no tempo e aventuras.'},
-    {'titulo': 'Jurassic Park', 'genero': 'Aventura', 'poster': 'https://via.placeholder.com/150', 'avaliacao': 4, 'descricao': 'Dinossauros em um parque temático.'},
-    {'titulo': 'O Exorcista', 'genero': 'Terror', 'poster': 'https://via.placeholder.com/150', 'avaliacao': 3, 'descricao': 'Uma menina possuída por um demônio.'},
-    {'titulo': 'Forrest Gump', 'genero': 'Drama', 'poster': 'https://via.placeholder.com/150', 'avaliacao': 5, 'descricao': 'A história de um homem com uma vida extraordinária.'},
+FILMES = [
+    {
+        'id': 1,
+        'titulo': 'A Origem',
+        'generos': ['Ação', 'Ficção'],
+        'poster': 'https://m.media-amazon.com/images/I/51s+BZ2U3wL._AC_.jpg',
+        'descricao': 'Dom Cobb é um ladrão com a rara habilidade de entrar nos sonhos das pessoas.',
+        'popularidade': 0.95
+    },
+    {
+        'id': 2,
+        'titulo': 'O Poderoso Chefão',
+        'generos': ['Crime', 'Drama'],
+        'poster': 'https://m.media-amazon.com/images/I/51xF0rQ71mL._AC_.jpg',
+        'descricao': 'A saga de uma poderosa família da máfia italiana.',
+        'popularidade': 0.98
+    },
+    {
+        'id': 3,
+        'titulo': 'Interestelar',
+        'generos': ['Ficção', 'Drama'],
+        'poster': 'https://m.media-amazon.com/images/I/71nDPcP+c5L._AC_SL1000_.jpg',
+        'descricao': 'Um grupo de astronautas viaja por um buraco de minhoca em busca de um novo lar.',
+        'popularidade': 0.9
+    },
+    {
+        'id': 4,
+        'titulo': 'Parasita',
+        'generos': ['Drama', 'Suspense'],
+        'poster': 'https://m.media-amazon.com/images/I/71c05lTE03L._AC_SL1178_.jpg',
+        'descricao': 'Uma crítica social sobre duas famílias em extremos sociais opostos.',
+        'popularidade': 0.91
+    },
+    {
+        'id': 5,
+        'titulo': 'Mad Max: Estrada da Fúria',
+        'generos': ['Ação', 'Aventura'],
+        'poster': 'https://m.media-amazon.com/images/I/81v+R2g2HHL._AC_SY679_.jpg',
+        'descricao': 'Num mundo pós-apocalíptico, Max ajuda uma rebelde a fugir de um tirano.',
+        'popularidade': 0.88
+    },
 ]
 
-# Função para calcular a probabilidade (sigmoide)
-def calcular_probabilidade(nota_usuario, nota_filme):
-    return 1 / (1 + math.exp(-(nota_usuario - nota_filme)))
+TODOS_GENEROS = sorted({g for filme in FILMES for g in filme['generos']})
 
-# Rota para a página inicial
-@app.route('/')
+# ====== Funções de recomendação ======
+
+def sigmoid(x):
+    return 1 / (1 + math.exp(-x))
+
+def calcular_probabilidade(filme, usuario):
+    afinidade = sum(1 for g in filme['generos'] if g in usuario['generos']) / len(filme['generos'])
+    aleatorio = random.uniform(-0.2, 0.2)
+    base = filme['popularidade'] * 2 + afinidade + aleatorio
+    return round(sigmoid(base) * 100, 1)
+
+def get_recomendados(usuario):
+    vistos = set(usuario['notas']) | set(usuario['watchlist'])
+    candidatos = [f for f in FILMES if f['id'] not in vistos]
+
+    recomendados = []
+    for f in candidatos:
+        prob = calcular_probabilidade(f, usuario)
+        recomendados.append((f, prob, "Popular e com gêneros compatíveis"))
+
+    recomendados.sort(key=lambda x: -x[1])
+    return recomendados
+
+def get_similares(filme):
+    base = set(filme['generos'])
+    similares = []
+    for f in FILMES:
+        if f['id'] == filme['id']:
+            continue
+        inter = len(base & set(f['generos']))
+        if inter > 0:
+            similares.append(f)
+    return similares[:3]
+
+# ====== Rotas ======
+
+@app.route('/', methods=['GET', 'POST'])
 def inicio():
-    return render_template_string('''
-        <!DOCTYPE html>
-        <html lang="pt-br">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Recomendações de Filmes</title>
-            <style>
-                body { font-family: Arial, sans-serif; }
-                .container { width: 80%; margin: 0 auto; text-align: center; }
-                .card { display: inline-block; width: 200px; margin: 10px; padding: 15px; border: 1px solid #ccc; }
-                .card img { width: 100%; height: auto; }
-                .card h3 { font-size: 1.2em; }
-                .btn { padding: 10px 20px; background-color: #007BFF; color: white; text-decoration: none; border-radius: 5px; }
-                .btn:hover { background-color: #0056b3; }
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <h1>Recomendações de Filmes</h1>
-                <a href="{{ url_for('explorar') }}" class="btn">Explorar Filmes</a> |
-                <a href="{{ url_for('minha_lista') }}" class="btn">Minha Lista</a> |
-                <a href="{{ url_for('minhas_notas') }}" class="btn">Minhas Notas</a> |
-                <a href="{{ url_for('reset') }}" class="btn">Resetar</a>
-                <h2>Filmes Recomendados</h2>
-                <div class="recomendacoes">
-                    {% for filme in filmes %}
-                        <div class="card">
-                            <img src="{{ filme['poster'] }}" alt="{{ filme['titulo'] }}">
-                            <h3>{{ filme['titulo'] }}</h3>
-                            <p>{{ filme['descricao'] }}</p>
-                            <p>Avaliação: {{ filme['avaliacao'] }} / 5</p>
-                            <p>Probabilidade de você gostar: {{ 100 | round(2) }}%</p>
-                            <a href="{{ url_for('detalhes', filme_id=loop.index0) }}" class="btn">Ver Detalhes</a>
-                        </div>
-                    {% endfor %}
-                </div>
-            </div>
-        </body>
-        </html>
-    ''', filmes=filmes)
+    if request.method == 'POST':
+        nome = request.form.get('nome')
+        idade = request.form.get('idade', type=int)
+        generos = request.form.getlist('generos')
+        if not nome or not idade or not generos:
+            return render_template_string(TEMPLATE_INICIO, generos=TODOS_GENEROS, erro="Preencha todos os campos")
+        session['user'] = {
+            'nome': nome,
+            'idade': idade,
+            'generos': generos,
+            'notas': {},
+            'watchlist': []
+        }
+        return redirect(url_for('recomendados'))
+    return render_template_string(TEMPLATE_INICIO, generos=TODOS_GENEROS, erro=None)
 
-# Rota para a página de explorar
+@app.route('/recomendados')
+def recomendados():
+    user = session.get('user')
+    if not user:
+        return redirect(url_for('inicio'))
+    recs = get_recomendados(user)
+    return render_template_string(TEMPLATE_RECOMENDADOS, recs=recs, nome=user['nome'])
+
 @app.route('/explorar')
 def explorar():
-    return render_template_string('''
-        <!DOCTYPE html>
-        <html lang="pt-br">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Explorar Filmes</title>
-            <style>
-                body { font-family: Arial, sans-serif; }
-                .container { width: 80%; margin: 0 auto; text-align: center; }
-                .card { display: inline-block; width: 200px; margin: 10px; padding: 15px; border: 1px solid #ccc; }
-                .card img { width: 100%; height: auto; }
-                .card h3 { font-size: 1.2em; }
-                .btn { padding: 10px 20px; background-color: #007BFF; color: white; text-decoration: none; border-radius: 5px; }
-                .btn:hover { background-color: #0056b3; }
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <h1>Explorar Filmes</h1>
-                <a href="{{ url_for('inicio') }}" class="btn">Voltar para Início</a>
-                <h2>Filmes Disponíveis</h2>
-                <div class="recomendacoes">
-                    {% for filme in filmes %}
-                        <div class="card">
-                            <img src="{{ filme['poster'] }}" alt="{{ filme['titulo'] }}">
-                            <h3>{{ filme['titulo'] }}</h3>
-                            <p>{{ filme['descricao'] }}</p>
-                            <p>Avaliação: {{ filme['avaliacao'] }} / 5</p>
-                            <a href="{{ url_for('detalhes', filme_id=loop.index0) }}" class="btn">Ver Detalhes</a>
-                        </div>
-                    {% endfor %}
-                </div>
-            </div>
-        </body>
-        </html>
-    ''', filmes=filmes)
+    user = session.get('user')
+    if not user:
+        return redirect(url_for('inicio'))
+    ordem = request.args.get('ordem', 'pop')
+    filmes = FILMES.copy()
+    if ordem == 'nome':
+        filmes.sort(key=lambda f: f['titulo'])
+    else:
+        filmes.sort(key=lambda f: -f['popularidade'])
+    return render_template_string(TEMPLATE_EXPLORAR, filmes=filmes, ordem=ordem)
 
-# Rota para a página de detalhes do filme
-@app.route('/detalhes/<int:filme_id>')
-def detalhes(filme_id):
-    filme = filmes[filme_id]
-    return render_template_string('''
-        <!DOCTYPE html>
-        <html lang="pt-br">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Detalhes do Filme</title>
-            <style>
-                body { font-family: Arial, sans-serif; }
-                .container { width: 80%; margin: 0 auto; text-align: center; }
-                .card { width: 100%; padding: 15px; border: 1px solid #ccc; margin-top: 20px; }
-                .card img { width: 200px; height: auto; display: block; margin: 0 auto; }
-                .btn { padding: 10px 20px; background-color: #007BFF; color: white; text-decoration: none; border-radius: 5px; }
-                .btn:hover { background-color: #0056b3; }
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <h1>{{ filme['titulo'] }}</h1>
-                <div class="card">
-                    <img src="{{ filme['poster'] }}" alt="{{ filme['titulo'] }}">
-                    <h3>{{ filme['titulo'] }}</h3>
-                    <p>{{ filme['descricao'] }}</p>
-                    <p>Avaliação: {{ filme['avaliacao'] }} / 5</p>
-                    <a href="{{ url_for('explorar') }}" class="btn">Voltar para Explorar</a>
-                </div>
-            </div>
-        </body>
-        </html>
-    ''', filme=filme)
+@app.route('/filme/<int:id>')
+def detalhes(id):
+    user = session.get('user')
+    if not user:
+        return redirect(url_for('inicio'))
+    filme = next((f for f in FILMES if f['id'] == id), None)
+    if not filme:
+        return "Filme não encontrado", 404
+    similares = get_similares(filme)
+    nota = user['notas'].get(id)
+    in_watchlist = id in user['watchlist']
+    return render_template_string(TEMPLATE_DETALHES, filme=filme, similares=similares, nota=nota, in_watchlist=in_watchlist)
 
-# Rota para a página da minha lista
-@app.route('/minha_lista')
+@app.route('/avaliar/<int:id>', methods=['POST'])
+def avaliar(id):
+    user = session.get('user')
+    if not user:
+        return redirect(url_for('inicio'))
+    nota = int(request.form.get('nota', 0))
+    if nota < 1 or nota > 5:
+        return "Nota inválida", 400
+    user['notas'][id] = nota
+    session['user'] = user
+    return redirect(url_for('recomendados'))
+
+@app.route('/watchlist/<int:id>')
+def watchlist(id):
+    user = session.get('user')
+    if not user:
+        return redirect(url_for('inicio'))
+    if id not in user['watchlist']:
+        user['watchlist'].append(id)
+    session['user'] = user
+    return redirect(url_for('minha_lista'))
+
+@app.route('/minha-lista')
 def minha_lista():
-    return render_template_string('''
-        <html>
-        <body>
-        <h1>Minha Lista</h1>
-        <p>Em breve!</p>
-        </body>
-        </html>
-    ''')
+    user = session.get('user')
+    if not user:
+        return redirect(url_for('inicio'))
+    filmes = [f for f in FILMES if f['id'] in user['watchlist']]
+    return render_template_string(TEMPLATE_MINHA_LISTA, filmes=filmes)
 
-# Rota para as minhas notas
-@app.route('/minhas_notas')
+@app.route('/minhas-notas')
 def minhas_notas():
-    return render_template_string('''
-        <html>
-        <body>
-        <h1>Minhas Notas</h1>
-        <p>Em breve!</p>
-        </body>
-        </html>
-    ''')
+    user = session.get('user')
+    if not user:
+        return redirect(url_for('inicio'))
+    notas = user['notas']
+    perfil = {}
+    for fid, nota in notas.items():
+        filme = next((f for f in FILMES if f['id'] == fid), None)
+        if filme:
+            for g in filme['generos']:
+                perfil.setdefault(g, []).append(nota)
+    medias = {g: round(sum(notas)/len(notas), 1) for g, notas in perfil.items()}
+    return render_template_string(TEMPLATE_MINHAS_NOTAS, perfil=medias, notas=notas)
 
-#
+@app.route('/buscar')
+def buscar():
+    user = session.get('user')
+    if not user:
+        return redirect(url_for('inicio'))
+    q = request.args.get('q', '').lower()
+    encontrados = [f for f in FILMES if q in f['titulo'].lower()]
+    return render_template_string(TEMPLATE_BUSCAR, filmes=encontrados, q=q)
+
+# ====== Templates ======
+
+STYLE = """
+<style>
+body { font-family: Arial, sans-serif; background: #f8f9fa; margin: 0; padding: 20px; }
+h1, h2, h3 { color: #333; }
+nav { margin-bottom: 15px; }
+nav a { margin-right: 15px; text-decoration: none; color: #007BFF; font-weight: bold; }
+nav a:hover { text-decoration: underline; }
+.form-error { color: red; margin-bottom: 10px; }
+.card { background: white; border-radius: 8px; padding: 10px; margin: 10px; width: 220px; box-shadow: 0 0 8px rgba(0,0,0,0.1); display: inline-block; vertical-align: top; }
+.card img { width: 100%; border-radius: 5px; }
+button, select, input[type="submit"] { cursor: pointer; }
+button { background-color: #007BFF; border: none; color: white; padding: 5px 10px; border-radius: 4px; }
+button:hover { background-color: #0056b3; }
+input[type="text"], select { padding: 5px; border-radius: 4px; border: 1px solid #ccc; }
+.rating { color: #f39c12; font-weight: bold; }
+footer { margin-top: 30px; text-align: center; color: #888; font-size: 0.9em; }
+</style>
+<nav>
+  <a href="{{ url_for('inicio') }}">Início</a>
+  {% if session.get('user') %}
+  <a href="{{ url_for('recomendados') }}">Recomendados</a>
+  <a href="{{ url_for('explorar') }}">Explorar</a>
+  <a href="{{ url_for('minha_lista') }}">Minha Lista</a>
+  <a href="{{ url_for('minhas_notas') }}">Minhas Notas</a>
+  <a href="{{ url_for('buscar') }}">Buscar</a>
+  {% endif %}
+</nav>
+<hr>
+"""
+
+TEMPLATE_INICIO = STYLE + """
+<h1>Bem-vindo ao RecoFilmes</h1>
+{% if erro %}<div class="form-error">{{ erro }}</div>{% endif %}
+<form method="post">
+  <label>Nome: <input name="nome" required></label><br><br>
+  <label>Idade: <input name="idade" type="number" min="1" required></label><br><br>
+  <label>Gêneros favoritos:</label><br>
+  {% for g in generos %}
+    <label><input type="checkbox" name="generos" value="{{g}}"> {{g}}</label><br>
+  {% endfor %}
+  <br>
+  <input type="submit" value="Cadastrar">
+</form>
+"""
+
+TEMPLATE_RECOMENDADOS = STYLE + """
+<h1>Recomendações para {{ nome }}</h1>
+{% if not recs %}
+  <p>Você já avaliou todos os filmes disponíveis! Parabéns!</p>
+{% endif %}
+{% for filme, prob, motivo in recs %}
+<div class="card">
+  <img src="{{ filme.poster }}" alt="Poster">
+  <h3><a href="{{ url_for('detalhes', id=filme.id) }}">{{ filme.titulo }}</a></h3>
+  <p><b>Gêneros:</b> {{ filme.generos | join(', ') }}</p>
+  <p><b>Chance de gostar:</b> {{ prob }}%</p>
+  <p><i>{{ motivo }}</i></p>
+  <form action="{{ url_for('avaliar', id=filme.id) }}" method="post">
+    <label>Avalie (1 a 5): 
+      <select name="nota" required>
+        <option value="">--</option>
+        {% for i in range(1,6) %}
+          <option value="{{ i }}">{{ i }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button type="submit">Enviar</button>
+  </form>
+  <a href="{{ url_for('watchlist', id=filme.id) }}">+ Minha Lista</a>
+</div>
+{% endfor %}
+"""
+
+TEMPLATE_EXPLORAR = STYLE + """
+<h1>Explorar Filmes</h1>
+<form method="get" style="margin-bottom:15px;">
+  <label>Ordenar por:
+    <select name="ordem" onchange="this.form.submit()">
+      <option value="pop" {% if ordem == 'pop' %}selected{% endif %}>Popularidade</option>
+      <option value="nome" {% if ordem == 'nome' %}selected{% endif %}>Nome</option>
+    </select>
+  </label>
+</form>
+{% for filme in filmes %}
+<div class="card">
+  <img src="{{ filme.poster }}" alt="Poster">
+  <h3><a href="{{ url_for('detalhes', id=filme.id) }}">{{ filme.titulo }}</a></h3>
+  <p><b>Gêneros:</b> {{ filme.generos | join(', ') }}</p>
+  <p><b>Popularidade:</b> {{ (filme.popularidade * 100) | round(0) }}%</p>
+  <a href="{{ url_for('watchlist', id=filme.id) }}">+ Minha Lista</a>
+</div>
+{% endfor %}
+"""
+
+TEMPLATE_DETALHES = STYLE + """
+<h1>{{ filme.titulo }}</h1>
+<img src="{{ filme.poster }}" alt="Poster" style="width:300px; border-radius: 8px;">
+<p><b>Gêneros:</b> {{ filme.generos | join(', ') }}</p>
+<p><b>Descrição:</b> {{ filme.descricao }}</p>
+<p><b>Popularidade:</b> {{ (filme.popularidade * 100) | round(0) }}%</p>
+
+{% if nota %}
+<p><b>Sua avaliação:</b> <span class="rating">{{ nota }} / 5</span></p>
+{% else %}
+<form action="{{ url_for('avaliar', id=filme.id) }}" method="post">
+  <label>Avalie (1 a 5): 
+    <select name="nota" required>
+      <option value="">--</option>
+      {% for i in range(1,6) %}
+        <option value="{{ i }}">{{ i }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <button type="submit">Enviar</button>
+</form>
+{% endif %}
+
+{% if not in_watchlist %}
+  <a href="{{ url_for('watchlist', id=filme.id) }}"><button>Adicionar à Minha Lista</button></a>
+{% else %}
+  <p>Já está na sua lista!</p>
+{% endif %}
+
+<hr>
+<h3>Filmes similares</h3>
+{% for f in similares %}
+<div class="card" style="width:180px;">
+  <img src="{{ f.poster }}" alt="Poster">
+  <h4><a href="{{ url_for('detalhes', id=f.id) }}">{{ f.titulo }}</a></h4>
+  <p><b>Gêneros:</b> {{ f.generos | join(', ') }}</p>
+</div>
+{% else %}
+<p>Não há filmes similares.</p>
+{% endfor %}
+"""
+
+TEMPLATE_MINHA_LISTA = STYLE + """
+<h1>Minha Lista</h1>
+{% if not filmes %}
+  <p>Você não adicionou nenhum filme na lista.</p>
+{% endif %}
+{% for filme in filmes %}
+<div class="card">
+  <img src="{{ filme.poster }}" alt="Poster">
+  <h3><a href="{{ url_for('detalhes', id=filme.id) }}">{{ filme.titulo }}</a></h3>
+  <p><b>Gêneros:</b> {{ filme.generos | join(', ') }}</p>
+  <a href="{{ url_for('avaliar', id=filme.id) }}"><button>Avaliar</button></a>
+</div>
+{% endfor %}
+"""
+
+TEMPLATE_MINHAS_NOTAS = STYLE + """
+<h1>Minhas Notas por Gênero</h1>
+{% if not perfil %}
+  <p>Você ainda não avaliou nenhum filme.</p>
+{% else %}
+<table border="1" cellpadding="5" cellspacing="0" style="border-collapse: collapse;">
+  <thead><tr><th>Gênero</th><th>Média da Nota</th></tr></thead>
+  <tbody>
+    {% for g, m in perfil.items() %}
+    <tr><td>{{ g }}</td><td>{{ m }}</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+<hr>
+<h3>Filmes Avaliados</h3>
+{% if not notas %}
+  <p>Nenhuma avaliação feita.</p>
+{% else %}
+<ul>
+  {% for fid, nota in notas.items() %}
+  {% set f = (FILMES | selectattr("id","equalto",fid) | list)[0] %}
+  <li><b>{{ f.titulo }}</b>: {{ nota }} / 5</li>
+  {% endfor %}
+</ul>
+{% endif %}
+"""
+
+TEMPLATE_BUSCAR = STYLE + """
+<h1>Buscar Filmes</h1>
+<form method="get">
+  <input type="text" name="q" placeholder="Digite o título..." value="{{ q }}" required>
+  <input type="submit" value="Buscar">
+</form>
+<hr>
+{% if filmes %}
+  <p>Resultados para "{{ q }}":</p>
+  {% for filme in filmes %}
+  <div class="card">
+    <img src="{{ filme.poster }}" alt="Poster">
+    <h3><a href="{{ url_for('detalhes', id=filme.id) }}">{{ filme.titulo }}</a></h3>
+    <p><b>Gêneros:</b> {{ filme.generos | join(', ') }}</p>
+  </div>
+  {% endfor %}
+{% else %}
+  <p>Nenhum filme encontrado para "{{ q }}"</p>
+{% endif %}
+"""
+
+# Precisamos disponibilizar FILMES para os templates, para filtros
+@app.context_processor
+def inject_filmes():
+    return dict(FILMES=FILMES)
+
+# ====== Run ======
+if __name__ == '__main__':
+    app.run(debug=True)
